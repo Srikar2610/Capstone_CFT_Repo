@@ -26,7 +26,7 @@ Parameters:
     Type: String
     Default: 10.0.0.0/16
 
-Resources:
+  Resources:
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -35,7 +35,7 @@ Resources:
       EnableDnsHostnames: true
       Tags:
         - Key: Name
-          Value: my-vpc
+          Value: three-tier-vpc
  
   InternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -58,7 +58,7 @@ Resources:
           Value: PublicSubnet1
         - Key: kubernetes.io/role/elb
           Value: 1
-        - Key: kubernetes.io/cluster/my-cluster
+        - Key: kubernetes.io/cluster/three-tier-cluster
           Value: shared
  
   PublicSubnet2:
@@ -73,7 +73,7 @@ Resources:
           Value: PublicSubnet2
         - Key: kubernetes.io/role/elb
           Value: 1
-        - Key: kubernetes.io/cluster/my-cluster
+        - Key: kubernetes.io/cluster/three-tier-cluster
           Value: shared
  
   PrivateSubnet1:
@@ -87,7 +87,7 @@ Resources:
           Value: PrivateSubnet1
         - Key: kubernetes.io/role/internal-elb
           Value: 1
-        - Key: kubernetes.io/cluster/my-cluster
+        - Key: kubernetes.io/cluster/three-tier-cluster
           Value: shared
  
   PrivateSubnet2:
@@ -101,7 +101,7 @@ Resources:
           Value: PrivateSubnet2
         - Key: kubernetes.io/role/internal-elb
           Value: 1
-        - Key: kubernetes.io/cluster/my-cluster
+        - Key: kubernetes.io/cluster/three-tier-cluster
           Value: shared
  
   NatEIP:
@@ -162,46 +162,26 @@ Resources:
     Properties:
       RouteTableId: !Ref PrivateRouteTable
       SubnetId: !Ref PrivateSubnet2
-
-  # BackupVault:
-  #   Type: AWS::Backup::BackupVault
-  #   Properties:
-  #     BackupVaultName: online-banking-backup-vault
-
-  # BackupPlan:
-  #   Type: AWS::Backup::BackupPlan
-  #   Properties:
-  #     BackupPlan:
-  #       BackupPlanName: OnlineBankingBackupPlan
-  #       Rules:
-  #         - RuleName: DailyBackup
-  #           TargetBackupVault: !Ref BackupVault
-  #           ScheduleExpression: cron(0 5 ? * * *)
-  #           StartWindowMinutes: 60
-  #           CompletionWindowMinutes: 180
-  #           Lifecycle:
-  #             DeleteAfterDays: 30
-
-  # BackupSelection:
-  #   Type: AWS::Backup::BackupSelection
-  #   Properties:
-  #     BackupPlanId: !Ref BackupPlan
-  #     BackupSelection:
-  #       SelectionName: BackupSelection
-  #       IamRoleArn: !GetAtt CodeBuildRole.Arn
-  #       Resources:
-  #         - !Sub arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:${RDSInstance}
-
-  ECRRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: online-banking
-
+ 
+ 
+ 
+### === Part 2: Artifact Infrastructure (S3, CodeBuild, ECR, Roles) ===
+ 
   ArtifactBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: my-cft-123spsp
-
+      BucketName: three-tier-cft-pipeline-artifacts-fsdfda
+ 
+  FrontendECRRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: frontend-image
+ 
+  BackendECRRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: backend-image
+ 
   CodeBuildServiceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -219,7 +199,7 @@ Resources:
         - arn:aws:iam::aws:policy/AdministratorAccess
         - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
         - arn:aws:iam::aws:policy/AWSCodeBuildAdminAccess
-
+ 
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
@@ -237,13 +217,39 @@ Resources:
             Value: !Ref AWS::AccountId
           - Name: REGION
             Value: !Ref AWS::Region
-          - Name: IMAGE_REPO
-            Value: online-banking
+          - Name: FRONTEND_IMAGE_REPO
+            Value: frontend
+          - Name: BACKEND_IMAGE_REPO
+            Value: backend
       Source:
         Type: CODEPIPELINE
         BuildSpec: buildspec.yml
       TimeoutInMinutes: 30
-  
+ 
+  # # Optional: Namespace YAML generation for safe deployment
+  #   BuildspecPatchInstructions:
+  #   Type: AWS::SSM::Document
+  #   Properties:
+  #     DocumentType: Command
+  #     Content:
+  #       schemaVersion: '2.2'
+  #       description: "Patch buildspec to include namespace.yaml generation."
+  #       mainSteps:
+  #         - action: aws:runCommand
+  #           name: patchBuildspec
+  #           inputs:
+  #             runCommand:
+  #               - echo "Adding namespace.yaml generation..."
+  #               - |
+  #                 echo "apiVersion: v1
+  #                 kind: Namespace
+  #                 metadata:
+  #                   name: three-tier" > k8s-out/namespace.yaml
+ 
+ 
+### === Part 3: EKS Cluster and Node Group ===
+ 
+ 
   EKSClusterRole:
     Type: AWS::IAM::Role
     Properties:
@@ -261,7 +267,7 @@ Resources:
         - arn:aws:iam::aws:policy/AdministratorAccess
       Tags:
         - Key: Name
-          Value: my-cluster-role
+          Value: three-tier-cluster-role
  
   EKSNodeGroupRole:
     Type: AWS::IAM::Role
@@ -283,7 +289,7 @@ Resources:
   MyEKSCluster:
     Type: AWS::EKS::Cluster
     Properties:
-      Name: my-cluster
+      Name: three-tier-cluster
       RoleArn: !GetAtt EKSClusterRole.Arn
       ResourcesVpcConfig:
         SubnetIds:
@@ -298,7 +304,7 @@ Resources:
         BootstrapClusterCreatorAdminPermissions: true
       Tags:
         - Key: Name
-          Value: my-cluster
+          Value: three-tier-cluster
  
   MyNodeGroup:
     Type: AWS::EKS::Nodegroup
@@ -319,7 +325,7 @@ Resources:
       AmiType: AL2_x86_64
       DiskSize: 20
       Tags:
-        Name: my-nodegroup
+        Name: three-tier-nodegroup
  
   RDSDBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -344,12 +350,12 @@ Resources:
         - !Ref PrivateSubnet2
       Tags:
         - Key: Name
-          Value: my-db-subnet-group
+          Value: three-tier-db-subnet-group
  
   MyRDSInstance:
     Type: AWS::RDS::DBInstance
     Properties:
-      DBInstanceIdentifier: my-mysql
+      DBInstanceIdentifier: three-tier-mysql
       Engine: mysql
       EngineVersion: 8.0.36
       MasterUsername: !Ref DBUsername
@@ -364,7 +370,7 @@ Resources:
       BackupRetentionPeriod: 1
       Tags:
         - Key: Name
-          Value: my-rds-instance
+          Value: three-tier-rds-instance
  
  
 ##############################
@@ -471,21 +477,9 @@ Resources:
               InputArtifacts:
                 - Name: BuildOutput
               Configuration:
-                ClusterName: my-cluster
+                ClusterName: three-tier-cluster
                 ManifestFiles: |
-                  deployment.yaml,
-                  service.yaml
+                  frontend-deployment.yaml,
+                  backend-deployment.yaml
               OutputArtifacts: []
               RunOrder: 1
-
-Outputs:
-  VPC:
-    Value: !Ref VPC
-  EKSCluster:
-    Value: !Ref MyEKSCluster
-  ECRRepo:
-    Value: !Ref ECRRepository
-  RDSInstance:
-    Value: !Ref MyRDSInstance
-  # BackupVault:
-  #   Value: !Ref BackupVault
